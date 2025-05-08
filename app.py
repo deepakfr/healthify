@@ -8,8 +8,8 @@ import random
 from email.message import EmailMessage
 
 # --- Email Setup ---
-SENDER_EMAIL = "youremail@example.com"     # <-- Replace with your email
-SENDER_PASSWORD = "your-app-password"      # <-- Replace with your app-specific password
+SENDER_EMAIL = "youremail@example.com"     # Replace with your email
+SENDER_PASSWORD = "your-app-password"      # Replace with your app-specific password
 
 # --- Utility Functions ---
 def make_hashes(password):
@@ -78,12 +78,53 @@ def get_user_healthdata(username):
     c.execute('SELECT date, steps, water FROM healthdata WHERE username=? ORDER BY date DESC', (username,))
     return c.fetchall()
 
-# --- App Main ---
+# --- Dashboard ---
+def show_dashboard(username):
+    create_health_table()
+    st.subheader(f"📊 {username}'s Health Dashboard")
+
+    # Logout button
+    if st.sidebar.button("Logout"):
+        st.session_state['logged_in'] = False
+        st.session_state['username'] = ""
+        st.rerun()
+
+    today = datetime.date.today()
+    st.markdown("### 📥 Enter today's data")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        steps = st.number_input("🚶 Steps Walked", min_value=0, max_value=50000, step=100)
+        sleep = st.slider("🛌 Hours Slept", 0.0, 12.0, step=0.5)
+
+    with col2:
+        water = st.number_input("💧 Water Intake (liters)", min_value=0.0, max_value=10.0, step=0.1)
+        mood = st.selectbox("😊 Mood", ["Happy", "Neutral", "Sad", "Anxious"])
+
+    if st.button("Submit Today's Data"):
+        add_healthdata(username, today, steps, water, sleep, mood)
+        st.success("Data saved!")
+
+    st.markdown("### 📅 Recent Records")
+    records = get_user_healthdata(username)
+    if records:
+        df = pd.DataFrame(records, columns=["Date", "Steps", "Water Intake (L)"])
+        st.dataframe(df)
+        st.line_chart(df.set_index("Date"))
+    else:
+        st.info("No records yet. Start by entering today's data!")
+
+# --- Main App ---
 def main():
     st.set_page_config(page_title="HealthHub", layout="centered")
     st.title("🏥 HealthHub")
 
     create_usertable()
+
+    # ✅ Check if user is already logged in
+    if st.session_state.get("logged_in"):
+        show_dashboard(st.session_state['username'])
+        return
 
     menu = ["Login", "Signup", "Forgot Password"]
     choice = st.sidebar.selectbox("Menu", menu)
@@ -98,8 +139,9 @@ def main():
             hashed = make_hashes(password)
             result = login_user(username, hashed)
             if result:
-                st.success(f"Welcome {username}!")
-                show_dashboard(username)
+                st.session_state['logged_in'] = True
+                st.session_state['username'] = username
+                st.rerun()
             else:
                 st.error("Incorrect username or password")
 
@@ -147,35 +189,6 @@ def main():
                     update_password(st.session_state.reset_user, make_hashes(new_pass))
                     st.success("Password successfully reset!")
 
-# --- Dashboard ---
-def show_dashboard(username):
-    create_health_table()
-    st.subheader(f"📊 {username}'s Health Data")
-
-    today = datetime.date.today()
-    st.markdown("### Enter today's data")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        steps = st.number_input("🚶 Steps Walked", min_value=0, max_value=50000, step=100)
-        sleep = st.slider("🛌 Hours Slept", 0.0, 12.0, step=0.5)
-
-    with col2:
-        water = st.number_input("💧 Water Intake (liters)", min_value=0.0, max_value=10.0, step=0.1)
-        mood = st.selectbox("😊 Mood", ["Happy", "Neutral", "Sad", "Anxious"])
-
-    if st.button("Submit Today's Data"):
-        add_healthdata(username, today, steps, water, sleep, mood)
-        st.success("Data saved!")
-
-    st.markdown("### 📅 Recent Records")
-    records = get_user_healthdata(username)
-    if records:
-        df = pd.DataFrame(records, columns=["Date", "Steps", "Water Intake (L)"])
-        st.dataframe(df)
-        st.line_chart(df.set_index("Date"))
-    else:
-        st.info("No records yet. Start by entering today's data!")
-
+# --- Run ---
 if __name__ == '__main__':
     main()
