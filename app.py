@@ -9,7 +9,7 @@ from email.message import EmailMessage
 import openai
 
 # --- OpenAI API Key ---
-openai.api_key = st.secrets["openai_api_key"]
+openai.api_key = st.secrets.get("openai_api_key", "sk-test-default-key")
 
 # --- Email Credentials (Static for Deployment) ---
 SENDER_EMAIL = "youremail@example.com"     # You can still use this for 'from' display
