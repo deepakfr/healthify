@@ -6,24 +6,25 @@ import datetime
 import smtplib
 import random
 from email.message import EmailMessage
+import openai
 
-# --- Email Setup ---
-SENDER_EMAIL = "youremail@example.com"     # Replace with your email
-SENDER_PASSWORD = "your-app-password"      # Replace with your app-specific password
+# --- OpenAI API Key ---
+openai.api_key = st.secrets["openai_api_key"]
+
+# --- Email Credentials (Static for Deployment) ---
+SENDER_EMAIL = "youremail@example.com"     # You can still use this for 'from' display
+SENDER_PASSWORD = "your-email-app-password"  # Not used if deploying on Streamlit Cloud
 
 # --- Utility Functions ---
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
-def check_hashes(password, hashed_text):
-    return make_hashes(password) == hashed_text
-
 def send_verification_code(email, code):
     msg = EmailMessage()
-    msg['Subject'] = '🔐 HealthHub Reset Code'
+    msg['Subject'] = '🔐 HealthHub Password Reset Code'
     msg['From'] = SENDER_EMAIL
     msg['To'] = email
-    msg.set_content(f"Hello from HealthHub!\n\nYour password reset code is: {code}\n\nIf you didn't request this, ignore this email.")
+    msg.set_content(f"Your HealthHub password reset code is: {code}")
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
@@ -33,6 +34,26 @@ def send_verification_code(email, code):
     except Exception as e:
         st.error(f"Failed to send email: {e}")
         return False
+
+def get_diet_suggestion(calories, goal):
+    prompt = f"""
+    I consumed {calories} calories today and my goal is to {goal.lower()}. 
+    Suggest a personalized meal plan and health tips for tomorrow to help me achieve my goal. 
+    Include food examples and meal timing.
+    """
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a certified nutritionist."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"⚠️ Error: {e}"
 
 # --- Database ---
 conn = sqlite3.connect('healthhub.db', check_same_thread=False)
@@ -65,17 +86,20 @@ def create_health_table():
             steps INTEGER,
             water REAL,
             sleep REAL,
-            mood TEXT
+            mood TEXT,
+            calories INTEGER
         )
     ''')
 
-def add_healthdata(username, date, steps, water, sleep, mood):
-    c.execute('INSERT INTO healthdata(username, date, steps, water, sleep, mood) VALUES (?,?,?,?,?,?)',
-              (username, date, steps, water, sleep, mood))
+def add_healthdata(username, date, steps, water, sleep, mood, calories):
+    c.execute('''
+        INSERT INTO healthdata(username, date, steps, water, sleep, mood, calories)
+        VALUES (?,?,?,?,?,?,?)
+    ''', (username, date, steps, water, sleep, mood, calories))
     conn.commit()
 
 def get_user_healthdata(username):
-    c.execute('SELECT date, steps, water FROM healthdata WHERE username=? ORDER BY date DESC', (username,))
+    c.execute('SELECT date, steps, water, calories FROM healthdata WHERE username=? ORDER BY date DESC', (username,))
     return c.fetchall()
 
 # --- Dashboard ---
@@ -83,7 +107,6 @@ def show_dashboard(username):
     create_health_table()
     st.subheader(f"📊 {username}'s Health Dashboard")
 
-    # Logout button
     if st.sidebar.button("Logout"):
         st.session_state['logged_in'] = False
         st.session_state['username'] = ""
@@ -91,6 +114,7 @@ def show_dashboard(username):
 
     today = datetime.date.today()
     st.markdown("### 📥 Enter today's data")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -101,14 +125,23 @@ def show_dashboard(username):
         water = st.number_input("💧 Water Intake (liters)", min_value=0.0, max_value=10.0, step=0.1)
         mood = st.selectbox("😊 Mood", ["Happy", "Neutral", "Sad", "Anxious"])
 
+    calories = st.number_input("🔥 Calories Consumed", min_value=0, max_value=6000, step=50)
+    goal = st.selectbox("🎯 Your Goal", ["Lose weight", "Maintain weight", "Gain weight"])
+
     if st.button("Submit Today's Data"):
-        add_healthdata(username, today, steps, water, sleep, mood)
-        st.success("Data saved!")
+        add_healthdata(username, today, steps, water, sleep, mood, calories)
+        st.success("✅ Data saved!")
+
+    if st.button("Get AI Diet Suggestion"):
+        with st.spinner("Generating personalized plan..."):
+            suggestion = get_diet_suggestion(calories, goal)
+            st.markdown("### 🤖 AI Diet Suggestion")
+            st.write(suggestion)
 
     st.markdown("### 📅 Recent Records")
     records = get_user_healthdata(username)
     if records:
-        df = pd.DataFrame(records, columns=["Date", "Steps", "Water Intake (L)"])
+        df = pd.DataFrame(records, columns=["Date", "Steps", "Water Intake (L)", "Calories"])
         st.dataframe(df)
         st.line_chart(df.set_index("Date"))
     else:
@@ -121,7 +154,6 @@ def main():
 
     create_usertable()
 
-    # ✅ Check if user is already logged in
     if st.session_state.get("logged_in"):
         show_dashboard(st.session_state['username'])
         return
@@ -131,7 +163,6 @@ def main():
 
     if choice == "Login":
         st.subheader("🔐 Login to your account")
-
         username = st.text_input("Username")
         password = st.text_input("Password", type='password')
 
@@ -147,7 +178,6 @@ def main():
 
     elif choice == "Signup":
         st.subheader("📝 Create a new account")
-
         new_user = st.text_input("Choose a username")
         new_password = st.text_input("Choose a password", type='password')
         email = st.text_input("Your email address")
@@ -161,7 +191,6 @@ def main():
 
     elif choice == "Forgot Password":
         st.subheader("🔑 Forgot Password")
-
         username = st.text_input("Enter your username")
 
         if st.button("Send Code"):
@@ -171,12 +200,12 @@ def main():
                 st.session_state.reset_code = code
                 st.session_state.reset_user = username
                 if send_verification_code(user_email[0], code):
-                    st.success(f"A reset code has been sent to {user_email[0]}")
+                    st.success(f"Code sent to {user_email[0]}")
             else:
                 st.error("Username not found.")
 
         if 'reset_user' in st.session_state:
-            entered_code = st.text_input("Enter the code you received")
+            entered_code = st.text_input("Enter the code")
             new_pass = st.text_input("New password", type='password')
             confirm_pass = st.text_input("Confirm password", type='password')
 
@@ -187,7 +216,7 @@ def main():
                     st.error("Passwords do not match.")
                 else:
                     update_password(st.session_state.reset_user, make_hashes(new_pass))
-                    st.success("Password successfully reset!")
+                    st.success("Password reset successfully!")
 
 # --- Run ---
 if __name__ == '__main__':
